@@ -12,14 +12,15 @@ def handleNewConn(ids_event, conn, sock):
                 sendIDSDecision(ids_event, True, sock)
             else:
                 print ("DoS advisory detected")
-                sendDecision(ids_event, False, sock)
+                sendIDSDecision(ids_event, False, sock)
                 closeConnection(ids_event.remote_address, sock)
         else:
             print ("first connection from IP")
             listIpConn[ids_event.remote_address]=[conn]
+            print ("Unique IP connections:", listIpConn.keys())
             sendIDSDecision(ids_event, True, sock)
     except KeyError:
-        print ("key exception")
+        print ("IP conn key exception")
 
 def handleTerminateConn(ids_event, conn, sock):
     print ("inside terminate conn")
@@ -99,6 +100,7 @@ def clientInitialized(conn):
 
 def closeConnection(ip, sock):
     lstConn=listIpConn[ip]
+    print (listIpConn)
     del listIpConn[ip]
     for val in lstConn:
         sendIDSTerminateConn(val, sock)
@@ -115,10 +117,10 @@ def sendIDSDecision(ids_event, decision, sock):
 def sendIDSTerminateConn(conn, sock):
     ids_ter=nstp_v2_pb2.IDSTerminateConnection()
     ids_ter.address_family= conn[0]
-    ids_ter.address_family = conn[1]
-    ids_ter.address_family = conn[2]
-    ids_ter.address_family = conn[3]
-    ids_ter.address_family = conn[4]
+    ids_ter.server_address = conn[1]
+    ids_ter.server_port = conn[2]
+    ids_ter.remote_address = conn[3]
+    ids_ter.remote_port = conn[4]
     msg=nstp_v2_pb2.IDSMessage()
     msg.terminate_connection.CopyFrom(ids_ter)
     sock.sendall(append_len(msg.SerializeToString()))
@@ -142,9 +144,17 @@ def checkKeyPath(key):
         else:
             return True
 
+#Receive full message from the buffer before decoding Protobuf
+def recv_full_msg(n, sock):
+    msg=b''
+    while n>0:
+        chunk = sock.recv(n)
+        n= n - len(chunk)
+        msg = msg+chunk
+    return msg
+
 # Create a UDS socket
 sock = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
-
 # Connect the socket to the socket file where the server is listening
 server_address = sys.argv[1]
 # server_address = '/tmp/nstp_ids.socket'
@@ -159,16 +169,16 @@ clientInit={}
 listIpConn={}
 try:
     while True:
-        data = sock.recv(1024)
+        data = sock.recv(2)
         if data:
-            ids_msg = nstp_v2_pb2.IDSMessage()
             len_msg = struct.unpack('!H', data[:2])
-            ids_msg.ParseFromString(data[2:2+len_msg[0]])
-            print (ids_msg)
-            #ids_event=nstp_v2_pb2.IDSMessage()
-            ids_event= nstp_v2_pb2.IDSEvent()
+            print(len_msg[0])
+            full_msg = recv_full_msg(len_msg[0], sock)
+            ids_msg = nstp_v2_pb2.IDSMessage()
+            ids_msg.ParseFromString(full_msg)
+            print(ids_msg)
+            ids_event = nstp_v2_pb2.IDSEvent()
             ids_event.CopyFrom(ids_msg.event)
-            #print (ids_event)
             if ids_event.client_to_server:
                 switcher = {
                     'connection_established': handleNewConn,
@@ -178,10 +188,12 @@ try:
                     'store_request': handleStoreReq,
                     'load_request': handleLoadReq
                 }
-                print (ids_event.WhichOneof("event"))
+                print(ids_event.WhichOneof("event"))
                 func = switcher.get(ids_event.WhichOneof("event"))
-                conn = (ids_event.address_family, ids_event.server_address, ids_event.server_port, ids_event.remote_address,ids_event.remote_port)
-                func(ids_event,conn,sock)
+                conn = (
+                ids_event.address_family, ids_event.server_address, ids_event.server_port, ids_event.remote_address,
+                ids_event.remote_port)
+                func(ids_event, conn, sock)
             else:
                 print("message from server to client")
                 sendIDSDecision(ids_event, True, sock)
