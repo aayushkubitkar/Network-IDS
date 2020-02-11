@@ -46,6 +46,7 @@ def handlePingReq(ids_event, conn, sock):
     try:
         if clientInitialized(conn):
             pingReq=nstp_v2_pb2.PingRequest()
+            pingReq.CopyFrom(ids_event.ping_request)
             if pingReq.hash_algorithm>=0 and pingReq.hash_algorithm<=2:
                 sendIDSDecision(ids_event, True,sock)
             else:
